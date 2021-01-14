@@ -2,6 +2,8 @@
 include("SpatialRegion.jl")
 include("Trip.jl")
 include("util.jl")
+include("Link.jl")
+using Statistics
 
 function createflowtensor!(region::SpatialRegion,
                            trips::Vector{Trip})
@@ -48,3 +50,91 @@ end
 #                                 126.771862, 45.830905,
 #                                 200., 200.)
 # reset!(harbin)
+
+
+function createflowtensorlink!(links::Dict,
+                           trips::Vector{Trip}, trip_indices::Vector)
+    """
+    Create the tensor that counts the number of taxi inflowing and outflowing each
+    road link using the `trips`.
+
+    link.I counts the inflow
+    link.O counts the outflow
+    link.S stores the mean speed
+    link.C counts the speed
+    """
+    function normalizex!(X)
+        X ./= sum(X)
+        X ./= maximum(X)
+    end
+    
+    max_I = 0
+    max_O = 0
+    
+    for idx = 1: length(trips) 
+        trip = trips[idx]
+        start_idx = trip_indices[idx][1]
+        end_idx = trip_indices[idx][2]
+        prev_link_id = trip.roads[trip.indices[start_idx] + 1]
+        for i = start_idx + 1:end_idx
+            if trip.spdist[i] > 0.1
+                println(string(trip.roads))
+                println(string(trip.lon))
+                println(string(trip.lat))
+                println(string(trip.tms))
+                println(string(trip.spdist))
+            end
+            v̄ = trip.spdist[i] / ((trip.tms[i] - trip.tms[i - 1]) / 60.0)
+            # remember that julia uses 1-based index
+            for j = trip.indices[i - 1] + 1:trip.indices[i] + 1
+                if haskey(links, trip.roads[j])
+                    current_link = get(links, trip.roads[j], 0)
+                else
+                    current_link = Link(trip.roads[j])
+                    links[trip.roads[j]] = current_link
+                end
+        
+                current_link = get(links, trip.roads[j], 0)
+                current_link.S += v̄ # speed
+                current_link.C += 1
+
+                if trip.roads[j] ≠ prev_link_id
+                    prev_link = get(links, prev_link_id, 0)
+                    current_link.I += 1 # inflow of current trip increase by 1
+                    if current_link.I > max_I
+                        max_I = current_link.I
+                    end
+                    prev_link.O += 1 # outflow of previous trip increase by 1
+                    if prev_link.O > max_O
+                        max_O = prev_link.O
+                    end
+                end
+                prev_link_id = trip.roads[j]
+            end
+        end
+        
+    end
+    
+    max_S = 0
+    min_S = 1
+    for (gid, link) in links
+        if link.C > 0
+            link.S /= link.C
+            if link.S > max_S
+                max_S = link.S
+            end
+            if link.S < min_S
+                min_S = link.S
+            end
+        end
+        # normalize data
+#         link.I /= 545.0
+#         link.O /= 539.0
+#         link.S /= 0.8167545199394226
+    end
+#     link.I /= max_I
+#     link.O /= max_O
+#     link.S /= max_S
+#     println("current slot max_S & min_S: " * string(max_S) * " " * string(min_S))
+    [max_I, max_O, max_S]
+end

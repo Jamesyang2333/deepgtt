@@ -1,4 +1,3 @@
-
 import numpy as np
 import torch, h5py, os
 from collections import namedtuple
@@ -88,7 +87,6 @@ class SlotData():
         """
         Reset the `start` every time the current slot has been traversed
         and return none.
-
         Input:
           batch_size (int)
         ---
@@ -139,6 +137,10 @@ class DataLoader():
         should only be called by `read_files()`.
         """
         with h5py.File(fname) as f:
+            # modify the number of slots if different,
+            # dataset 150103 only has 55 slots
+            if len(list(f.keys())) != self.num_slot:
+                self.num_slot = len(list(f.keys()))
             for slot in range(1, self.num_slot+1):
                 S = np.rot90(f["/{}/S".format(slot)][...]).copy()
                 n = f["/{}/ntrips".format(slot)][...]

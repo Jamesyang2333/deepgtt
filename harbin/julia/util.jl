@@ -71,6 +71,23 @@ function linear_interpolate(trip::Vector{Tuple{T,T}}, tms::Vector, Δ=200.) wher
     fine_trip, ts, vs
 end
 
+function linear_interpolate_2(trip::Vector{Tuple{T,T}}, tms::Vector, Δ=200.) where T
+    """
+    Interpolate a trip linearly.
+
+    Input:
+      trip: a vector of Webmercator coordinates with timestampes.
+    Return:
+      fine_trip: a vector of Webmercator coordinates with mean speed.
+    """
+    fine_trip, ts, vs = T[], T[], T[]
+    for i = 2:length(trip)
+        points, t, v = linear_interpolate(trip[i-1], trip[i], tms[i-1], tms[i], Δ)
+        i == 2 ? (push!(fine_trip, points); push!(ts, t); push!(vs, v)) :
+        (push!(fine_trip, points[2:end]); push!(ts, t[2:end]); push!(vs, v[2:end]))
+    end
+    fine_trip, ts, vs
+end
 
 function matched2geojson(dict::Dict)
     """

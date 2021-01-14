@@ -4,16 +4,27 @@ using StatsBase:rle
 import JSON
 include("util.jl")
 
+using Printf
+
 mutable struct Trip{T<:AbstractFloat}
     lon::Vector{T}
     lat::Vector{T}
     tms::Vector{T}
     devid
     roads
+    opath
+    mgeom_wkt
+    pgeom_wkt
+    indices
+    offset
+    spdist
 end
 
-Trip(lon, lat, tms) = Trip(lon, lat, tms, 0, nothing)
-Trip(lon, lat, tms, devid) = Trip(lon, lat, tms, devid, nothing)
+Trip(lon, lat, tms) = Trip(lon, lat, tms, 0, nothing, nothing, nothing, nothing, nothing, nothing, nothing)
+Trip(lon, lat, tms, devid) = Trip(lon, lat, tms, devid, nothing, nothing, nothing, nothing, nothing, nothing, nothing)
+
+# Trip(lon, lat, tms) = Trip(lon, lat, tms, 0, nothing, nothing, nothing, nothing, nothing)
+# Trip(lon, lat, tms, devid) = Trip(lon, lat, tms, devid, nothing, nothing, nothing, nothing, nothing)
 
 function Base.show(io::IO, t::Trip)
     print(io, "Trip: $(length(t.lon)) points")
@@ -68,15 +79,37 @@ end
 
 function pathdistance(trip::Trip)
     """
-    The trip distance (km) in the road network
+    The trip distance (km) in the road network, of the first half and of the second half
     """
+    mid = (1 + length(trip)) // 2
     s = 0.0
+    half1 = 0.0
+    half2 = 0.0
     for i = 2:length(trip)
         px, py = gps2webmercator(trip.lon[i-1], trip.lat[i-1])
         cx, cy = gps2webmercator(trip.lon[i], trip.lat[i])
         s += euclidean([px, py], [cx, cy])
+        if i <= mid
+            half1 += euclidean([px, py], [cx, cy])
+        end
+        if i > mid
+            half2 += euclidean([px, py], [cx, cy])
+        end
     end
-    s / 1000.0
+    [s / 1000.0, half1 / 1000.0, half2 /1000.0]
+end
+
+function pathdistanceall(trip::Trip)
+    """
+    The vector of distance between each pair of gps sample points
+    """
+    result = Float64[]
+    for i = 2:length(trip)
+        px, py = gps2webmercator(trip.lon[i-1], trip.lat[i-1])
+        cx, cy = gps2webmercator(trip.lon[i], trip.lat[i])
+        push!(result, euclidean([px, py], [cx, cy]))
+    end
+    result
 end
 
 
@@ -93,19 +126,38 @@ function isvalidtrip(trip::Trip)
     true
 end
 
+function isvalidtrip_fmm(trip::Trip)
+    """
+    Return true if the trip is a valid trip which maximum speed cannnot exceed 35
+    otherwise return false.
+    """
+    for i = 1:length(trip.lon)
+        if trip.spdist[i] > 0.04
+            return false
+        end
+    end
+    true
+end
+
 function timeslotsubtrips(trips::Vector{Trip}, stms::T, etms::T) where T
     """
     Return the sub-trips falling into time slot [stms, etms].
     """
     subtrips = Trip[]
+    subtrip_indices = []
     for trip in trips
         a, b = searchrange(trip.tms, stms, etms)
         if a < b
-            subtrip = Trip(trip.lon[a:b], trip.lat[a:b], trip.tms[a:b], trip.devid)
+#             subtrip = Trip(trip.lon[a:b], trip.lat[a:b], trip.tms[a:b], trip.devid)
+#             push!(subtrips, subtrip)
+#             # for gnn data processing
+#             # added road links when generating subtrips
+            subtrip = deepcopy(trip)
             push!(subtrips, subtrip)
+            push!(subtrip_indices, [a, b])
         end
     end
-    subtrips
+    subtrips, subtrip_indices
 end
 
 function timeslottrips(trips::Vector{Trip}, stms::T, etms::T, Δmins=5) where T
@@ -203,6 +255,68 @@ function matchtrip(trip::Trip)
     finally
         close(clientside)
     end
+end
+
+function trip2linestring(trip::Trip)
+    """
+    Mapping a trip to the json format required by the map matcher
+    Input:
+      trip (Trip)
+    Output:
+      _ string
+    """
+    result = "LINESTRING("
+    for i = 1:length(trip)
+        lon, lat = trip.lon[i], trip.lat[i]
+        if i != length(trip)
+            result=result * (string(lon) * " " * string(lat) * ",")
+        else
+            result=result * (string(lon) * " " * string(lat) * ")")
+        end
+    end
+    result
+end
+
+function matchtrip_fmm(trip::Trip)
+    """
+    Matching a trip by submitting it to the match server.
+
+    Input:
+      trip (Trip)
+    Output:
+      result (Vector): an array of dict
+    """
+    #js = trip2finetrip(trip, 200) |> removeredundantpoints |> trip2json
+    request = trip |> removeredundantpoints |> trip2linestring
+    clientside = connect("localhost", 1235)
+    try
+#         println(request)
+        message = request * "\n"
+        write(clientside, message)
+#         response = readline(clientside)
+#         response == "SUCCESS" ? readline(clientside) |> JSON.parse : []
+        result = readline(clientside)
+#         println(result)
+        result = JSON.parse(result)
+#         println(result)
+        result
+    finally
+        close(clientside)
+    end
+end
+
+function trip2roads_fmm(trip::Trip)
+    """
+    Mapping a trip to a sequence of road segments.
+    """
+    result = matchtrip_fmm(trip)
+    # deduplicate the path segments
+    # roads, _ = map(d->get(d, "road", -1), result) |> rle
+#     roads = map(d->get(d, "road", -1), result)
+    if get(result, "state", -1) == 0
+        result["Cpath"] = []
+    end
+    result
 end
 
 function trip2roads(trip::Trip)

@@ -8,6 +8,8 @@ from data_osmnx_utils import DataLoader
 from model import *
 import db_osmnx_utils as db_utils, argparse, os, time
 from collections import namedtuple
+from Optim import ScheduledOptim
+import itertools  
 
 ##  python ~/travel-model/travel-modelling/harbin/python/train.py -trainpath /home/xiucheng/travel-model/data-7min/traindata -validpath /home/xiucheng/travel-model/data-7min/validdata -kl_decay 0.0 -use_selu -random_emit
 
@@ -25,7 +27,7 @@ parser.add_argument("-dim_u", type=int, default=200,
 parser.add_argument("-dim_rho", type=int, default=256,
     help="The dimension of rho (road representation)")
 
-parser.add_argument("-dim_c", type=int, default=400,
+parser.add_argument("-dim_c", type=int, default=128,
     help="The dimension of c (traffic state representation)")
 
 parser.add_argument("-dropout", type=float, default=0.2,
@@ -61,6 +63,9 @@ parser.add_argument("-random_emit", action="store_true")
 parser.add_argument("-model_path", type=str, default="../models/best-model",
     help="path to save model")
 
+parser.add_argument("-use_gnn", type=bool, default=False)
+
+
 args = parser.parse_args()
 print(args)
 
@@ -79,7 +84,17 @@ def log_pdf(logμ, logλ, t):
       logpdf (batch_size, )
     """
     eps = 1e-9
+#     print("max / min value of log mu in batch " + str(torch.max(logμ)) + " " + str(torch.min(logμ)))
+#     print("max / min value of log lambda in batch " + str(torch.max(logλ)) + " " + str(torch.min(logλ)))
     μ = torch.exp(logμ)
+#     print("max / min value of mu in batch " + str(torch.max(μ)) + " " + str(torch.min(μ)))
+    if ((μ.pow(2)*t+eps)==0).any():
+        idx = ((μ.pow(2)*t+eps)==0).nonzero()
+        print(μ[idx])
+        print(t[idx])
+        print(eps[idx])
+#     print("max / min value of numerator in batch " + str(torch.max(-0.5 * torch.exp(logλ)*torch.pow(t-μ,2))) + " " + str(torch.min(-0.5 * torch.exp(logλ)*torch.pow(t-μ,2))))
+#     print("max / min value of denominator in batch " + str(torch.max(μ.pow(2)*t+eps)) + " " + str(torch.min(μ.pow(2)*t+eps)))
     expt = -0.5 * torch.exp(logλ)*torch.pow(t-μ,2) / (μ.pow(2)*t+eps)
     logz = 0.5*logλ - 1.5*torch.log(t)
     return expt+logz
@@ -115,34 +130,30 @@ dict_s2, num_s2 = db_utils.get_dict_s2()
 dict_s3, num_s3 = db_utils.get_dict_s3()
 
 ## Model
-probrho = ProbRho(num_u, args.dim_u, dict_u, lengths,
-                  num_s1, dim_s1, dict_s1,
-                  num_s2, dim_s2, dict_s2,
-                  num_s3, dim_s3, dict_s3,
-                  hidden_size1, args.dim_rho,
-                  args.dropout, args.use_selu, device).to(device)
-probtraffic = ProbTraffic(1, hidden_size2, args.dim_c,
-                          args.dropout, args.use_selu).to(device)
-probttime = ProbTravelTime(args.dim_rho, args.dim_c, hidden_size3,
-                           args.dropout, args.use_selu).to(device)
+TTime_spatial = TTime_spatial(num_u, args.dim_u, dict_u,
+                       num_s1, dim_s1, dict_s1,
+                       num_s2, dim_s2, dict_s2,
+                       num_s3, dim_s3, dict_s3, 
+                       args.dim_rho, args.dim_c, lengths,
+                       hidden_size1, hidden_size2, hidden_size3,
+                       args.dropout, args.use_selu, device).to(device)
 
 Params = namedtuple("params", ["num_u", "dim_u", "dict_u", "lengths", "num_s1",
                                "dim_s1", "dict_s1", "num_s2", "dim_s2", "dict_s2",
                                "num_s3", "dim_s3", "dict_s3", "dim_rho","dim_c",
                                "hidden_size2", "hidden_size3", "hidden_size1",
-                               "dropout", "use_selu", "model_path"])
+                               "dropout", "use_selu", "model_path", "use_gnn"])
 params = Params(num_u=num_u, dim_u=args.dim_u, dict_u=dict_u, lengths=lengths,
                 num_s1=num_s1, dim_s1=dim_s1, dict_s1=dict_s1, num_s2=num_s2,
                 dim_s2=dim_s2, dict_s2=dict_s2, num_s3=num_s3, dim_s3=dim_s3,
                 dict_s3=dict_s3, dim_rho=args.dim_rho, dim_c=args.dim_c,
                 hidden_size1=hidden_size1, hidden_size2=hidden_size2, hidden_size3=hidden_size3,
-                dropout=args.dropout, use_selu=args.use_selu, model_path=args.model_path)
+                dropout=args.dropout, use_selu=args.use_selu, model_path=args.model_path, use_gnn=args.use_gnn)
 
 
 ## Optimizer
-optimizer_rho = torch.optim.Adam(probrho.parameters(), lr=args.lr, amsgrad=True)
-optimizer_traffic = torch.optim.Adam(probtraffic.parameters(), lr=args.lr, amsgrad=True)
-optimizer_ttime = torch.optim.Adam(probttime.parameters(), lr=args.lr, amsgrad=True)
+optimizer_ttime = torch.optim.Adam(TTime_spatial.parameters(), lr=args.lr, amsgrad=True)
+# optimizer_ttime = ScheduledOptim(torch.optim.Adam(TTime_gnn.parameters(), betas=(0.9, 0.98), eps=1e-9, amsgrad=False), 1, 128, 8000)
 
 
 ## Preparing the data
@@ -152,10 +163,10 @@ validfiles = list(filter(lambda x:x.endswith(".h5"),
                          sorted(os.listdir(args.validpath))))
 train_dataloader = DataLoader(args.trainpath)
 print("Loading the training data...")
-train_dataloader.read_files(trainfiles)
+train_dataloader.read_files(trainfiles, args.use_gnn)
 valid_dataloader = DataLoader(args.validpath)
 print("Loading the validation data...")
-valid_dataloader.read_files(validfiles)
+valid_dataloader.read_files(validfiles, args.use_gnn)
 train_slot_size = np.array(list(map(lambda s:s.ntrips, train_dataloader.slotdata_pool)))
 train_num_iterations = int(np.ceil(train_slot_size/args.batch_size).sum())
 print("There are {} trips in the training dataset".format(train_slot_size.sum()))
@@ -164,71 +175,66 @@ valid_slot_size = np.array(list(map(lambda s:s.ntrips, valid_dataloader.slotdata
 valid_num_iterations = int(np.ceil(valid_slot_size/args.batch_size).sum())
 
 def validate(num_iterations):
-    probrho.eval()
-    probtraffic.eval()
-    probttime.eval()
+    TTime_spatial.eval()
 
     with torch.no_grad():
         total_loss, total_mse = 0.0, 0.0
         for _ in range(num_iterations):
             data = valid_dataloader.order_emit(args.batch_size)
-            road_lens = probrho.roads_length(data.trips, data.ratios)
-            l = road_lens.sum(dim=1) # the whole trip lengths
-            w = road_lens / road_lens.sum(dim=1, keepdim=True) # road weights
-            rho = probrho(data.trips)
-            c, mu_c, logvar_c = probtraffic(data.S.to(device))
-            logμ, logλ = probttime(rho, c, w, l)
+            logμ, logλ = TTime_spatial(data.trips, data.ratios, data.S.to(device),  data.lon_idx, data.lat_idx)
+#             logμ, logλ, mu_c, logvar_c = TTime_gnn(data.trips, data.ratios, data.links.to(device), train_dataloader.get_adj().to(device))
             times = data.times.to(device)
-            loss = log_prob_loss(logμ, logλ, times) + args.kl_decay*KLD(mu_c, logvar_c)
+            loss = log_prob_loss(logμ, logλ, times)
+#             loss = log_prob_loss(logμ, logλ, times) + args.kl_decay*KLD(mu_c, logvar_c)
             total_loss += loss.item() * data.trips.shape[0]
             total_mse += F.mse_loss(torch.exp(logμ), times).item() * data.trips.shape[0]
         mean_loss, mean_mse = total_loss/np.sum(valid_slot_size), total_mse/np.sum(valid_slot_size)
         print("Validation Loss {0:.4f} MSE {1:.4f}".format(mean_loss, mean_mse))
-    probrho.train()
-    probtraffic.train()
-    probttime.train()
+    TTime_spatial.train()
     return mean_loss, mean_mse
 
 
 def train(num_iterations=1000):
-    epoch_loss, epoch_mse, stage_mse = 0., 0., 0.
+    epoch_loss, stage_loss, epoch_mse, stage_mse = 0., 0., 0., 0.
     for it in range(1, num_iterations+1):
         ## Loading the data
         if args.random_emit == True:
             data = train_dataloader.random_emit(args.batch_size)
         else:
             data = train_dataloader.order_emit(args.batch_size)
-        ## forward computation
-        road_lens = probrho.roads_length(data.trips, data.ratios)
-        l = road_lens.sum(dim=1) # the whole trip lengths
-        w = road_lens / road_lens.sum(dim=1, keepdim=True) # road weights
-        rho = probrho(data.trips)
-        c, mu_c, logvar_c = probtraffic(data.S.to(device))
-        logμ, logλ = probttime(rho, c, w, l)
-        ## move to gpu
-        times = data.times.to(device)
-        loss = log_prob_loss(logμ, logλ, times) + args.kl_decay*KLD(mu_c, logvar_c)
-        epoch_loss += loss.item()
-        ## Measuring the mean square error
-        mse = F.mse_loss(torch.exp(logμ), times)
-        epoch_mse += mse.item()
-        stage_mse += mse.item()
-        if it % args.print_freq == 0:
-            print("Stage MSE: {0:.4f} at epoch {1:} iteration {2:}".format\
-                  (stage_mse/args.print_freq, epoch, it))
-            stage_mse = 0
-        ## backward optimization
-        optimizer_rho.zero_grad()
-        optimizer_traffic.zero_grad()
-        optimizer_ttime.zero_grad()
-        loss.backward()
-        ## optimizing
-        clip_grad_norm_(probrho.parameters(), args.max_grad_norm)
-        clip_grad_norm_(probtraffic.parameters(), args.max_grad_norm)
-        clip_grad_norm_(probttime.parameters(), args.max_grad_norm)
-        optimizer_rho.step()
-        optimizer_traffic.step()
-        optimizer_ttime.step()
+        with torch.autograd.detect_anomaly():
+            ## forward computation
+            if it==1:
+                lon_idx = [x.tolist() for x in data.lon_idx]
+                print(set(list(itertools.chain.from_iterable(lon_idx))))
+                lat_idx = [x.tolist() for x in data.lat_idx]
+                print(set(list(itertools.chain.from_iterable(lat_idx))))
+            logμ, logλ = TTime_spatial(data.trips, data.ratios, data.S.to(device), data.lon_idx, data.lat_idx)
+#             logμ, logλ, mu_c, logvar_c = TTime_gnn(data.trips, data.ratios, data.links.to(device), train_dataloader.get_adj().to(device))
+#             logμ = torch.div(logμ, 50.0)
+#             logλ = torch.div(logλ, 50.0)
+            ## move to gpu
+            times = data.times.to(device)
+            loss = log_prob_loss(logμ, logλ, times)
+#             loss = log_prob_loss(logμ, logλ, times) + args.kl_decay*KLD(mu_c, logvar_c)
+            epoch_loss += loss.item()
+            stage_loss += loss.item()
+            ## Measuring the mean square error
+            mse = F.mse_loss(torch.exp(logμ), times)
+            epoch_mse += mse.item()
+            stage_mse += mse.item()
+            if it % args.print_freq == 0:
+                print("Stage MSE: {0:.4f} Loss {1:.4f} at epoch {2:} iteration {3:}".format\
+                      (stage_mse/args.print_freq, stage_loss/args.print_freq, epoch, it))
+                stage_mse = 0
+                stage_loss = 0
+            ## backward optimization
+            optimizer_ttime.zero_grad()
+            loss.backward()
+            ## optimizing
+            clip_grad_norm_(TTime_spatial.parameters(), args.max_grad_norm)
+            optimizer_ttime.step()
+#             optimizer_ttime.step_and_update_lr()
     print("\nEpoch Loss: {0:.4f}".format(epoch_loss / num_iterations))
     print("Epoch MSE: {0:.4f}".format(epoch_mse / num_iterations))
 
@@ -241,14 +247,10 @@ for epoch in range(1, args.num_epoch+1):
     if mean_mse < min_mse:
         print("Saving model...")
         torch.save({
-            "probrho": probrho.state_dict(),
-            "probtraffic": probtraffic.state_dict(),
-            "probttime": probttime.state_dict(),
+            "TTime_gnn": TTime_spatial.state_dict(),
             "params": params._asdict()
         }, args.model_path + ".pt")
         min_mse = mean_mse
-    adjust_lr(optimizer_rho, epoch)
-    adjust_lr(optimizer_traffic, epoch)
     adjust_lr(optimizer_ttime, epoch)
 cost = time.time() - tic
 print("Time passed: {} hours".format(cost/3600))
