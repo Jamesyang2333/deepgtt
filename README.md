@@ -74,14 +74,14 @@ deepgtt+gnn
 ```bash
 cd deepgtt/harbin/python
 
-python train_gnn.py -trainpath /Project0551/jingyi/deepgtt/data/trainpath-fmm-gnn-renorm-test -validpath /Project0551/jingyi/deepgtt/data/trainpath-fmm-gnn-renorm-test -kl_decay 0.0 -use_selu -random_emit -model_path  /Project0551/jingyi/deepgtt/model/gnn-test -use_gnn True -dim_c 128 
+python train_gnn.py -trainpath /Project0551/jingyi/deepgtt/data/trainpath-fmm-gnn-renorm -validpath /Project0551/jingyi/deepgtt/data/validpath-fmm-gnn-renorm -kl_decay 0.0 -use_selu -random_emit -model_path  /Project0551/jingyi/deepgtt/model/gnn-test -use_gnn True -dim_c 128 
 ```
 deepgtt(trajectory-specific)
 
 ```bash
 cd deepgtt/harbin/python
 
-python train_spatial.py -trainpath /Project0551/jingyi/deepgtt/data/trainpath-fmm-gnn-spatial-test -validpath /Project0551/jingyi/deepgtt/data/trainpath-fmm-gnn-spatial-test -model_path  /Project0551/jingyi/deepgtt/model/spatial-test -use_gnn False -lr_decay 0.8
+python train_spatial.py -trainpath /Project0551/jingyi/deepgtt/data/trainpath-fmm-gnn-spatial -validpath /Project0551/jingyi/deepgtt/data/validpath-fmm-gnn-spatial -model_path  /Project0551/jingyi/deepgtt/model/spatial-test -use_gnn False -lr_decay 0.8
 ```
 
 ## Testing
