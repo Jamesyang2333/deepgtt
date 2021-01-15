@@ -237,9 +237,9 @@ class TTime_gnn(nn.Module):
 #         self.probtraffic = ProbTraffic_gat_dgl_pool(db_utils.get_graph_dgl(device), 3, 3, 8, 128, [8, 8, 8, 1], F.elu, 0.2, 0.2, 0.2, False).to(device)
 #         self.probtraffic = ProbTraffic_gcn(db_utils.get_graph_dgl(device)).to(device)
 #         self.probtraffic = ProbTraffic_gcn_pool(db_utils.get_graph_dgl(device)).to(device)
-#         self.probtraffic = ProbTraffic_gcn_res_pool(db_utils.get_graph_dgl(device)).to(device)
+        self.probtraffic = ProbTraffic_gcn_res_pool(db_utils.get_graph_dgl(device)).to(device)
 #         self.probtraffic = ProbTraffic_gin(db_utils.get_graph_dgl(device)).to(device)
-        self.probtraffic = ProbTraffic_chebnet(db_utils.get_graph_dgl(device)).to(device)
+#         self.probtraffic = ProbTraffic_chebnet(db_utils.get_graph_dgl(device)).to(device)
 #         self.probttime = ProbTravelTime_gnn(dim_rho, dim_c, hidden_size3, dropout, use_selu, device).to(device)
         self.probttime = ProbTravelTime(dim_rho, dim_c, hidden_size3, dropout, use_selu).to(device)
 
@@ -248,9 +248,9 @@ class TTime_gnn(nn.Module):
         l = road_lens.sum(dim=1) # the whole trip lengths
         w = road_lens / road_lens.sum(dim=1, keepdim=True) # road weights
         rho = self.probrho(roads)
-        c = self.probtraffic(T[:, 2:3] / 0.23398585617542267)
-        # normalized average speed
-#         c, mu_c, logvar_c = self.probtraffic(T[:, 2:3] / 0.23398585617542267)
+#         c = self.probtraffic(T[:, 2:3] / 0.23398585617542267)
+        # normalized average speed through division by max speed
+        c, mu_c, logvar_c = self.probtraffic(T[:, 2:3] / 0.23398585617542267)
 #         logμ, logλ = self.probttime(rho, c, w, l, roads)
         logμ, logλ = self.probttime(rho, c, w, l)
 #         return logμ, logλ, mu_c, logvar_c
