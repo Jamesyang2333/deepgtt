@@ -178,6 +178,164 @@ class ProbTraffic(nn.Module):
         mu, logvar = self.f2(x.view(x.size(0), -1))
         return self.reparameterize(mu, logvar), mu, logvar
 
+class conv_deconv(nn.Module):
+
+    def __init__(self):
+        super(conv_deconv,self).__init__()
+        #Convolution 1
+        self.conv1=nn.Conv2d(in_channels=1,out_channels=16, kernel_size=4,stride=1, padding=0)
+        nn.init.xavier_uniform(self.conv1.weight) #Xaviers Initialisation
+        self.swish1= nn.ReLU()
+
+        #Max Pool 1
+        self.maxpool1= nn.MaxPool2d(kernel_size=2,return_indices=True)
+
+        #Convolution 2
+        self.conv2 = nn.Conv2d(in_channels=16, out_channels=32, kernel_size=5)
+        nn.init.xavier_uniform(self.conv2.weight)
+        self.swish2 = nn.ReLU()
+
+        #Max Pool 2
+        self.maxpool2 = nn.MaxPool2d(kernel_size=2,return_indices=True)
+
+        #Convolution 3
+        self.conv3 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3)
+        nn.init.xavier_uniform(self.conv3.weight)
+        self.swish3 = nn.ReLU()
+
+        #De Convolution 1
+        self.deconv1=nn.ConvTranspose2d(in_channels=64,out_channels=32,kernel_size=3)
+        nn.init.xavier_uniform(self.deconv1.weight)
+        self.swish4=nn.ReLU()
+
+        #Max UnPool 1
+        self.maxunpool1=nn.MaxUnpool2d(kernel_size=2)
+
+        #De Convolution 2
+        self.deconv2=nn.ConvTranspose2d(in_channels=32,out_channels=16,kernel_size=5)
+        nn.init.xavier_uniform(self.deconv2.weight)
+        self.swish5=nn.ReLU()
+
+        #Max UnPool 2
+        self.maxunpool2=nn.MaxUnpool2d(kernel_size=2)
+
+        #DeConvolution 3
+        self.deconv3=nn.ConvTranspose2d(in_channels=16,out_channels=1,kernel_size=4)
+        nn.init.xavier_uniform(self.deconv3.weight)
+        self.swish6=nn.ReLU()
+
+    def forward(self,x):
+        out=self.conv1(x)
+        out=self.swish1(out)
+        size1 = out.size()
+        out,indices1=self.maxpool1(out)
+        out=self.conv2(out)
+        out=self.swish2(out)
+        size2 = out.size()
+        out,indices2=self.maxpool2(out)
+        out=self.conv3(out)
+        out=self.swish3(out)
+
+        out=self.deconv1(out)
+        out=self.swish4(out)
+        out=self.maxunpool1(out,indices2,size2)
+        out=self.deconv2(out)
+        out=self.swish5(out)
+        out=self.maxunpool2(out,indices1,size1)
+        out=self.deconv3(out)
+        out=self.swish6(out)
+        return(out)
+
+class ProbTraffic_reconstruct(nn.Module):
+    """
+    Modelling the probability of the traffic state `c`
+    """
+    def __init__(self, n_in, hidden_size, dim_c, dropout, use_selu):
+        super(ProbTraffic_reconstruct, self).__init__()
+        conv_layers = [
+            nn.Conv2d(n_in, 32, (5, 5), stride=2, padding=1),
+            nn.BatchNorm2d(32),
+            nn.LeakyReLU(0.1, inplace=True),
+            nn.Conv2d(32, 64, (4, 4), stride=2, padding=1),
+            nn.BatchNorm2d(64),
+            nn.LeakyReLU(0.1, inplace=True),
+            nn.Conv2d(64, 128, (4, 4), stride=2, padding=1),
+            nn.BatchNorm2d(128),
+            nn.LeakyReLU(0.1, inplace=True),
+            nn.AvgPool2d(7)
+        ]
+        self.conv_deconv = conv_deconv()
+        self.f1 = nn.Sequential(*conv_layers)
+        self.f2 = MLP2(128*2*2, hidden_size, dim_c, dropout, use_selu)
+
+    def reparameterize(self, mu, logvar):
+        if self.training:
+            std = torch.exp(0.5*logvar)
+            eps = torch.randn_like(std)
+            return eps.mul(std).add(mu)
+        else:
+            return mu
+
+    def forward(self, T):
+        """
+        Input:
+          T (batch_size, nchannel, height, width)
+        Output:
+          c, mu, logvar (batch_size, dim_c)
+        """
+        T_complete = self.conv_deconv(T)
+        x = self.f1(T_complete)
+        mu, logvar = self.f2(x.view(x.size(0), -1))
+        return self.reparameterize(mu, logvar), mu, logvar, T_complete
+    
+class ProbTraffic_reconstruct_mask(nn.Module):
+    """
+    Modelling the probability of the traffic state `c`
+    """
+    def __init__(self, n_in, hidden_size, dim_c, dropout, use_selu, mask):
+        super(ProbTraffic_reconstruct_mask, self).__init__()
+        conv_layers = [
+            nn.Conv2d(n_in, 32, (5, 5), stride=2, padding=1),
+            nn.BatchNorm2d(32),
+            nn.LeakyReLU(0.1, inplace=True),
+            nn.Conv2d(32, 64, (4, 4), stride=2, padding=1),
+            nn.BatchNorm2d(64),
+            nn.LeakyReLU(0.1, inplace=True),
+            nn.Conv2d(64, 128, (4, 4), stride=2, padding=1),
+            nn.BatchNorm2d(128),
+            nn.LeakyReLU(0.1, inplace=True),
+            nn.AvgPool2d(7)
+        ]
+        self.conv_deconv = conv_deconv()
+        self.f1 = nn.Sequential(*conv_layers)
+        self.f2 = MLP2(128*2*2, hidden_size, dim_c, dropout, use_selu)
+        self.mask = mask
+
+    def reparameterize(self, mu, logvar):
+        if self.training:
+            std = torch.exp(0.5*logvar)
+            eps = torch.randn_like(std)
+            return eps.mul(std).add(mu)
+        else:
+            return mu
+
+    def forward(self, T):
+        """
+        Input:
+          T (batch_size, nchannel, height, width)
+        Output:
+          c, mu, logvar (batch_size, dim_c)
+        """
+        T_complete = self.conv_deconv(T)
+        T_complete_mask = T_complete.clone()
+        mask = (self.mask == 0)
+#         print(mask.shape)
+#         print(T_complete_mask.shape)
+        T_complete_mask[mask] = 0
+        x = self.f1(T_complete_mask)
+        mu, logvar = self.f2(x.view(x.size(0), -1))
+        return self.reparameterize(mu, logvar), mu, logvar, T_complete
+
 
 class ProbTravelTime(nn.Module):
     def __init__(self, dim_rho, dim_c,
@@ -721,106 +879,106 @@ class ProbTravelTime_spatial(nn.Module):
 
     
 
-class ProbTraffic_spatial_hybrid(nn.Module):
-    """
-    Modelling the probability of the traffic state `c`
-    """
-    def __init__(self, n_in, hidden_size, dim_c, dropout, use_selu):
-        super(ProbTraffic_spatial_hybrid, self).__init__()
-        conv_layers = [
-            nn.Conv2d(n_in, 32, (5, 5), stride=2, padding=1),
-            nn.BatchNorm2d(32),
-            nn.LeakyReLU(0.1, inplace=True),
-            nn.Conv2d(32, 64, (4, 4), stride=2, padding=1),
-            nn.BatchNorm2d(64),
-            nn.LeakyReLU(0.1, inplace=True),
-            nn.Conv2d(64, 128, (4, 4), stride=2, padding=1),
-            nn.BatchNorm2d(128),
-            nn.LeakyReLU(0.1, inplace=True),
-        ]
-        self.avgPool = nn.AvgPool2d(7)
-        self.f1 = nn.Sequential(*conv_layers)
-        self.f2 = MLP2(128*2*2, hidden_size, dim_c, dropout, use_selu)
+# class ProbTraffic_spatial_hybrid(nn.Module):
+#     """
+#     Modelling the probability of the traffic state `c`
+#     """
+#     def __init__(self, n_in, hidden_size, dim_c, dropout, use_selu):
+#         super(ProbTraffic_spatial_hybrid, self).__init__()
+#         conv_layers = [
+#             nn.Conv2d(n_in, 32, (5, 5), stride=2, padding=1),
+#             nn.BatchNorm2d(32),
+#             nn.LeakyReLU(0.1, inplace=True),
+#             nn.Conv2d(32, 64, (4, 4), stride=2, padding=1),
+#             nn.BatchNorm2d(64),
+#             nn.LeakyReLU(0.1, inplace=True),
+#             nn.Conv2d(64, 128, (4, 4), stride=2, padding=1),
+#             nn.BatchNorm2d(128),
+#             nn.LeakyReLU(0.1, inplace=True),
+#         ]
+#         self.avgPool = nn.AvgPool2d(7)
+#         self.f1 = nn.Sequential(*conv_layers)
+#         self.f2 = MLP2(128*2*2, hidden_size, dim_c, dropout, use_selu)
 
-    def reparameterize(self, mu, logvar):
-        if self.training:
-            std = torch.exp(0.5*logvar)
-            eps = torch.randn_like(std)
-            return eps.mul(std).add(mu)
-        else:
-            return mu
+#     def reparameterize(self, mu, logvar):
+#         if self.training:
+#             std = torch.exp(0.5*logvar)
+#             eps = torch.randn_like(std)
+#             return eps.mul(std).add(mu)
+#         else:
+#             return mu
 
-    def forward(self, T):
-        """
-        Input:
-          T (batch_size, nchannel, height, width)
-        Output:
-          c, mu, logvar (batch_size, dim_c)
-        """
-        x_map = self.f1(T)
-        x = self.avgPool(x_map)
-        mu, logvar = self.f2(x.view(x.size(0), -1))
+#     def forward(self, T):
+#         """
+#         Input:
+#           T (batch_size, nchannel, height, width)
+#         Output:
+#           c, mu, logvar (batch_size, dim_c)
+#         """
+#         x_map = self.f1(T)
+#         x = self.avgPool(x_map)
+#         mu, logvar = self.f2(x.view(x.size(0), -1))
         
-        return x_map, self.reparameterize(mu, logvar), mu, logvar
+#         return x_map, self.reparameterize(mu, logvar), mu, logvar
         
     
-class ProbTravelTime_spatial_hybrid(nn.Module):
-    def __init__(self, dim_rho, dim_c,
-                       hidden_size, dropout, use_selu, device):
-        super(ProbTravelTime_spatial_hybrid, self).__init__()
-        self.f = MLP2(dim_rho+dim_c, hidden_size, 1, dropout, use_selu)
-        self.f2 = MLP(128, 256, 128, 0.2, True)
-        self.device = device
+# class ProbTravelTime_spatial_hybrid(nn.Module):
+#     def __init__(self, dim_rho, dim_c,
+#                        hidden_size, dropout, use_selu, device):
+#         super(ProbTravelTime_spatial_hybrid, self).__init__()
+#         self.f = MLP2(dim_rho+dim_c, hidden_size, 1, dropout, use_selu)
+#         self.f2 = MLP(128, 256, 128, 0.2, True)
+#         self.device = device
 
-    def forward(self, rho, c, c_map, w, l, roads, lon_idx, lat_idx):
-        """
-        rho (batch_size, seq_len, dim_rho)
-        c (n_nodes, dim_c): the traffic state vector sampling from ProbTraffic
-        w (batch_size, seq_len): the normalized road lengths
-        l (batch_size, ): route or path lengths
-        """
-        ## (batch_size, seq_len, dim_rho+dim_c)
-        c_map = torch.squeeze(c_map, 0)
-        roads = roads.to(self.device)
-        print(c_map.shape)
-        c_map = c_map.permute(1, 2, 0)
-        c_flatten = torch.flatten(c_map, end_dim=1)
-        idx = [lat_idx[i] * 17 + lon_idx[i] for i in range(roads.size(0))]
-        embed_list = [torch.index_select(c_flatten, 0, idx[i].to(self.device)) for i in range(list(roads.size())[0])]
-        embed_list_traj = [torch.mean(item, dim=0) for item in embed_list]
-        c_stack = torch.stack(embed_list_traj, 0)
-#         pad_feature = torch.zeros((1, list(c.size())[1]), device=self.device)
+#     def forward(self, rho, c, c_map, w, l, roads, lon_idx, lat_idx):
+#         """
+#         rho (batch_size, seq_len, dim_rho)
+#         c (n_nodes, dim_c): the traffic state vector sampling from ProbTraffic
+#         w (batch_size, seq_len): the normalized road lengths
+#         l (batch_size, ): route or path lengths
+#         """
+#         ## (batch_size, seq_len, dim_rho+dim_c)
+#         c_map = torch.squeeze(c_map, 0)
+#         roads = roads.to(self.device)
+#         print(c_map.shape)
+#         c_map = c_map.permute(1, 2, 0)
+#         c_flatten = torch.flatten(c_map, end_dim=1)
+#         idx = [lat_idx[i] * 17 + lon_idx[i] for i in range(roads.size(0))]
+#         embed_list = [torch.index_select(c_flatten, 0, idx[i].to(self.device)) for i in range(list(roads.size())[0])]
+#         embed_list_traj = [torch.mean(item, dim=0) for item in embed_list]
+#         c_stack = torch.stack(embed_list_traj, 0)
+# #         pad_feature = torch.zeros((1, list(c.size())[1]), device=self.device)
         
-#         c_padded  = torch.cat((pad_feature, c), dim=0)
-# #         embed_list = [torch.index_select(c_padded, 0, roads[i]) for i in range(list(roads.size())[0])]
-# #         c_stack = torch.stack(embed_list, 0)
-#         c_padded_expand = torch.unsqueeze(c_padded, 0).expand(roads.size(0), -1, -1)
-#         dummy = roads.unsqueeze(2).expand(roads.size(0), roads.size(1), c_padded_expand.size(2))
-#         c_stack = torch.gather(c_padded_expand, 1, dummy)
-        # feed the node features through a 2-layer mlp
-        c_stack_transformed = self.f2(c_stack)
-        c_expand = torch.unsqueeze(c_stack_transformed, 1).expand(-1, rho.size(1), -1)
-        x = torch.cat([rho, c.expand(*rho.shape[:-1], -1)], 2)
-        x = torch.cat((x, c_expand), 2)
-        ## (batch_size, seq_len, 1)
-        logm, logv = self.f(x)
-        ## (batch_size, seq_len)
-        logm, logv = logm.squeeze(2), logv.squeeze(2)
-        #m, v = torch.exp(logm), torch.exp(logv)
-        ## (batch_size, )
-        #m_agg, v_agg = torch.sum(m * w, 1), torch.sum(v * w.pow(2), 1)
-        ## parameters of IG distribution
-        ## (batch_size, )
-        #logμ = torch.log(l) - torch.log(m_agg)
-        #logλ = 3*logμ - torch.log(v_agg) - 2*torch.log(l)
-        ## (batch_size, )
-#         logm_agg = logwsumexp(logm, w)
-#         logv_agg = logwsumexp(logv, w.pow(2))
-        logm_agg = torch.logsumexp(logm + torch.log(w), dim=1)
-        logv_agg = torch.logsumexp(logv + 2*torch.log(w), dim=1)
-        logl = torch.log(l)
-        ## parameters of IG distribution
-        ## (batch_size, )
-        logμ = logl - logm_agg
-        logλ = logl - 3*logm_agg - logv_agg
-        return logμ, logλ
+# #         c_padded  = torch.cat((pad_feature, c), dim=0)
+# # #         embed_list = [torch.index_select(c_padded, 0, roads[i]) for i in range(list(roads.size())[0])]
+# # #         c_stack = torch.stack(embed_list, 0)
+# #         c_padded_expand = torch.unsqueeze(c_padded, 0).expand(roads.size(0), -1, -1)
+# #         dummy = roads.unsqueeze(2).expand(roads.size(0), roads.size(1), c_padded_expand.size(2))
+# #         c_stack = torch.gather(c_padded_expand, 1, dummy)
+#         # feed the node features through a 2-layer mlp
+#         c_stack_transformed = self.f2(c_stack)
+#         c_expand = torch.unsqueeze(c_stack_transformed, 1).expand(-1, rho.size(1), -1)
+#         x = torch.cat([rho, c.expand(*rho.shape[:-1], -1)], 2)
+#         x = torch.cat((x, c_expand), 2)
+#         ## (batch_size, seq_len, 1)
+#         logm, logv = self.f(x)
+#         ## (batch_size, seq_len)
+#         logm, logv = logm.squeeze(2), logv.squeeze(2)
+#         #m, v = torch.exp(logm), torch.exp(logv)
+#         ## (batch_size, )
+#         #m_agg, v_agg = torch.sum(m * w, 1), torch.sum(v * w.pow(2), 1)
+#         ## parameters of IG distribution
+#         ## (batch_size, )
+#         #logμ = torch.log(l) - torch.log(m_agg)
+#         #logλ = 3*logμ - torch.log(v_agg) - 2*torch.log(l)
+#         ## (batch_size, )
+# #         logm_agg = logwsumexp(logm, w)
+# #         logv_agg = logwsumexp(logv, w.pow(2))
+#         logm_agg = torch.logsumexp(logm + torch.log(w), dim=1)
+#         logv_agg = torch.logsumexp(logv + 2*torch.log(w), dim=1)
+#         logl = torch.log(l)
+#         ## parameters of IG distribution
+#         ## (batch_size, )
+#         logμ = logl - logm_agg
+#         logλ = logl - 3*logm_agg - logv_agg
+#         return logμ, logλ

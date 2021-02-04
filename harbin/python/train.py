@@ -61,6 +61,9 @@ parser.add_argument("-random_emit", action="store_true")
 parser.add_argument("-model_path", type=str, default="../models/best-model",
     help="path to save model")
 
+parser.add_argument("-comp_eff", type=float, default=0.02,
+    help="efficient of traffic map reconstruction loss")
+
 args = parser.parse_args()
 print(args)
 
@@ -121,8 +124,10 @@ probrho = ProbRho(num_u, args.dim_u, dict_u, lengths,
                   num_s3, dim_s3, dict_s3,
                   hidden_size1, args.dim_rho,
                   args.dropout, args.use_selu, device).to(device)
-probtraffic = ProbTraffic(1, hidden_size2, args.dim_c,
+probtraffic = ProbTraffic_reconstruct(1, hidden_size2, args.dim_c,
                           args.dropout, args.use_selu).to(device)
+# probtraffic = ProbTraffic_reconstruct_mask(1, hidden_size2, args.dim_c,
+#                           args.dropout, args.use_selu, db_utils.get_map_mask()).to(device)
 probttime = ProbTravelTime(args.dim_rho, args.dim_c, hidden_size3,
                            args.dropout, args.use_selu).to(device)
 
@@ -130,13 +135,13 @@ Params = namedtuple("params", ["num_u", "dim_u", "dict_u", "lengths", "num_s1",
                                "dim_s1", "dict_s1", "num_s2", "dim_s2", "dict_s2",
                                "num_s3", "dim_s3", "dict_s3", "dim_rho","dim_c",
                                "hidden_size2", "hidden_size3", "hidden_size1",
-                               "dropout", "use_selu", "model_path"])
+                               "dropout", "use_selu", "model_path", "comp_eff"])
 params = Params(num_u=num_u, dim_u=args.dim_u, dict_u=dict_u, lengths=lengths,
                 num_s1=num_s1, dim_s1=dim_s1, dict_s1=dict_s1, num_s2=num_s2,
                 dim_s2=dim_s2, dict_s2=dict_s2, num_s3=num_s3, dim_s3=dim_s3,
                 dict_s3=dict_s3, dim_rho=args.dim_rho, dim_c=args.dim_c,
                 hidden_size1=hidden_size1, hidden_size2=hidden_size2, hidden_size3=hidden_size3,
-                dropout=args.dropout, use_selu=args.use_selu, model_path=args.model_path)
+                dropout=args.dropout, use_selu=args.use_selu, model_path=args.model_path, comp_eff=args.comp_eff)
 
 
 ## Optimizer
@@ -176,10 +181,25 @@ def validate(num_iterations):
             l = road_lens.sum(dim=1) # the whole trip lengths
             w = road_lens / road_lens.sum(dim=1, keepdim=True) # road weights
             rho = probrho(data.trips)
-            c, mu_c, logvar_c = probtraffic(data.S.to(device))
+#             c, mu_c, logvar_c = probtraffic(data.S.to(device))
+#             logμ, logλ = probttime(rho, c, w, l)
+#             times = data.times.to(device)
+#             loss = log_prob_loss(logμ, logλ, times) + args.kl_decay*KLD(mu_c, logvar_c)
+            
+            s = data.S.to(device)
+            c, mu_c, logvar_c, s_comp = probtraffic(s)
+            s_nonzero = torch.masked_select(s, torch.gt(s, 0))
+            s_comp_nonzero = torch.masked_select(s_comp, torch.gt(s, 0))
+            mseloss = nn.MSELoss()
+            loss_comp = mseloss(s_nonzero, s_comp_nonzero)
+
+
             logμ, logλ = probttime(rho, c, w, l)
+            ## move to gpu
             times = data.times.to(device)
-            loss = log_prob_loss(logμ, logλ, times) + args.kl_decay*KLD(mu_c, logvar_c)
+            loss_t = log_prob_loss(logμ, logλ, times)
+            loss = loss_t + args.kl_decay*KLD(mu_c, logvar_c) + args.comp_eff*loss_comp
+            
             total_loss += loss.item() * data.trips.shape[0]
             total_mse += F.mse_loss(torch.exp(logμ), times).item() * data.trips.shape[0]
         mean_loss, mean_mse = total_loss/np.sum(valid_slot_size), total_mse/np.sum(valid_slot_size)
@@ -191,7 +211,7 @@ def validate(num_iterations):
 
 
 def train(num_iterations=1000):
-    epoch_loss, epoch_mse, stage_mse = 0., 0., 0.
+    epoch_loss, stage_loss, stage_loss_t, stage_loss_comp , epoch_mse, stage_mse = 0., 0., 0., 0., 0., 0.
     for it in range(1, num_iterations+1):
         ## Loading the data
         if args.random_emit == True:
@@ -203,20 +223,35 @@ def train(num_iterations=1000):
         l = road_lens.sum(dim=1) # the whole trip lengths
         w = road_lens / road_lens.sum(dim=1, keepdim=True) # road weights
         rho = probrho(data.trips)
-        c, mu_c, logvar_c = probtraffic(data.S.to(device))
+        # pass the traffic condition map to GPU
+        s = data.S.to(device)
+        c, mu_c, logvar_c, s_comp = probtraffic(s)
+        s_nonzero = torch.masked_select(s, torch.gt(s, 0))
+        s_comp_nonzero = torch.masked_select(s_comp, torch.gt(s, 0))
+        mseloss = nn.MSELoss()
+        loss_comp = mseloss(s_nonzero, s_comp_nonzero)
+        
+        
         logμ, logλ = probttime(rho, c, w, l)
         ## move to gpu
         times = data.times.to(device)
-        loss = log_prob_loss(logμ, logλ, times) + args.kl_decay*KLD(mu_c, logvar_c)
+        loss_t = log_prob_loss(logμ, logλ, times)
+        loss = loss_t + args.kl_decay*KLD(mu_c, logvar_c) + args.comp_eff*loss_comp
         epoch_loss += loss.item()
+        stage_loss += loss.item()
+        stage_loss_t += loss_t.item()
+        stage_loss_comp += loss_comp.item()
         ## Measuring the mean square error
         mse = F.mse_loss(torch.exp(logμ), times)
         epoch_mse += mse.item()
         stage_mse += mse.item()
         if it % args.print_freq == 0:
-            print("Stage MSE: {0:.4f} at epoch {1:} iteration {2:}".format\
-                  (stage_mse/args.print_freq, epoch, it))
-            stage_mse = 0
+            print("Stage time Loss: {0:.4f} Stage comp Loss: {1:.4f} Stage Loss: {2:.4f} Stage MSE: {3:.4f} at epoch {4:} iteration {5:}".format\
+                  (stage_loss_t/args.print_freq, stage_loss_comp/args.print_freq, stage_loss/args.print_freq, stage_mse/args.print_freq, epoch, it))
+            stage_mse = 0 
+            stage_loss = 0
+            stage_loss_t = 0
+            stage_loss_comp = 0
         ## backward optimization
         optimizer_rho.zero_grad()
         optimizer_traffic.zero_grad()

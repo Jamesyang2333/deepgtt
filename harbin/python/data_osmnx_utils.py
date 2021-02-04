@@ -330,8 +330,8 @@ class DataLoader():
 #                 S = np.rot90(f["/{}/S".format(slot)][...]).copy()
                 S = np.transpose(f["/{}/S".format(slot)][...]).copy()
 # #                 print('percentage of zero entry in current: ', np.count_nonzero((S==0)) / (138*148))
-                for i in range(5):
-                    S = feature_completion_spatial(S)
+#                 for i in range(5):
+#                     S = feature_completion_spatial(S)
 #                 print('percentage of zero entry after 1 iter: ', np.count_nonzero((S==0)) / (138*148))
                 n = f["/{}/ntrips".format(slot)][...]
                 if n == 0: continue

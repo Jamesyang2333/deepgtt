@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-from data_utils import DataLoader
+from data_osmnx_utils import DataLoader
 from model import *
 import os, argparse, time
 
@@ -17,6 +17,8 @@ parser.add_argument("-model", default="best-model.pt")
 
 parser.add_argument("-batch_size", type=int, default=128,
     help="The batch size")
+
+parser.add_argument("-model_list", default="./test_list")
 
 args = parser.parse_args()
 print(args)
@@ -71,8 +73,10 @@ def load_model(fname):
                       params["num_s3"], params["dim_s3"], params["dict_s3"],
                       params["hidden_size1"], params["dim_rho"],
                       params["dropout"], params["use_selu"], device).to(device)
-    probtraffic = ProbTraffic(1, params["hidden_size2"], params["dim_c"],
+    probtraffic = ProbTraffic_reconstruct(1, params["hidden_size2"], params["dim_c"],
                               params["dropout"], params["use_selu"]).to(device)
+#     probtraffic = ProbTraffic_reconstruct_mask(1, params["hidden_size2"], params["dim_c"],
+#                               params["dropout"], params["use_selu"], db_utils.get_map_mask()).to(device)
     probttime = ProbTravelTime(params["dim_rho"], params["dim_c"], params["hidden_size3"],
                                params["dropout"], params["use_selu"]).to(device)
     probrho.load_state_dict(model["probrho"])
@@ -90,10 +94,24 @@ def validate(num_iterations, probrho,
         l = road_lens.sum(dim=1) # the whole trip lengths
         w = road_lens / road_lens.sum(dim=1, keepdim=True) # road weights
         rho = probrho(data.trips)
-        c, mu_c, logvar_c = probtraffic(data.S.to(device))
+        
+        s = data.S.to(device)
+        c, mu_c, logvar_c, s_comp = probtraffic(s)
+        s_nonzero = torch.masked_select(s, torch.gt(s, 0))
+        s_comp_nonzero = torch.masked_select(s_comp, torch.gt(s, 0))
+        mseloss = nn.MSELoss()
+        loss_comp = mseloss(s_nonzero, s_comp_nonzero)
+        
+        
         logμ, logλ = probttime(rho, c, w, l)
+        ## move to gpu
         times = data.times.to(device)
-        loss = log_prob_loss(logμ, logλ, times)
+        loss_t = log_prob_loss(logμ, logλ, times)
+        loss = loss_t
+#         c, mu_c, logvar_c = probtraffic(data.S.to(device))
+#         logμ, logλ = probttime(rho, c, w, l)
+#         times = data.times.to(device)
+#         loss = log_prob_loss(logμ, logλ, times)
         total_loss += loss.item() * data.trips.shape[0]
         total_mse += F.mse_loss(torch.exp(logμ), times).item() * data.trips.shape[0]
         total_l1 += F.l1_loss(torch.exp(logμ), times).item() * data.trips.shape[0]
@@ -104,10 +122,6 @@ def validate(num_iterations, probrho,
 
     return mean_loss, mean_mse
 
-probrho, probtraffic, probttime = load_model(args.model)
-probrho.eval()
-probtraffic.eval()
-probttime.eval()
 
 testfiles = list(filter(lambda x:x.endswith(".h5"),
                         sorted(os.listdir(args.testpath))))
@@ -118,7 +132,15 @@ test_slot_size = np.array(list(map(lambda s:s.ntrips, test_dataloader.slotdata_p
 print("There are {} trips in total".format(test_slot_size.sum()))
 test_num_iterations = int(np.ceil(test_slot_size/args.batch_size).sum())
 
-tic = time.time()
-with torch.no_grad():
-    validate(test_num_iterations, probrho, probtraffic, probttime)
-print("Time passed: {} seconds".format(time.time() - tic))
+f = open(args.model_list, 'r')
+for line in f:
+    model = line.strip()
+    print(model)
+    probrho, probtraffic, probttime = load_model(model)
+    probrho.eval()
+    probtraffic.eval()
+    probttime.eval()
+    tic = time.time()
+    with torch.no_grad():
+        validate(test_num_iterations, probrho, probtraffic, probttime)
+    print("Time passed: {} seconds".format(time.time() - tic))

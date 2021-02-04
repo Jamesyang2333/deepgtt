@@ -7,8 +7,76 @@ import scipy.sparse as sp
 import torch
 import networkx as nx
 import dgl
+import math
+
+def gps2webmercator(lon, lat):
+    """
+    Converting GPS coordinate to Web Mercator coordinate
+    """
+    semimajoraxis = 6378137.0
+    east = lon * 0.017453292519943295
+    north = lat * 0.017453292519943295
+    t = math.sin(north)
+    return semimajoraxis * east, 3189068.5 * math.log((1 + t) / (1 - t))
+
+def gps2webmercator_lon(lon):
+    """
+    Converting GPS coordinate to Web Mercator coordinate
+    """
+    semimajoraxis = 6378137.0
+    east = lon * 0.017453292519943295
+    return semimajoraxis * east
+
+def gps2webmercator_lat(lat):
+    """
+    Converting GPS coordinate to Web Mercator coordinate
+    """
+    semimajoraxis = 6378137.0
+    north = lat * 0.017453292519943295
+    t = math.sin(north)
+    return 3189068.5 * math.log((1 + t) / (1 - t))
+
 
 osmnx_ways = gpd.read_file('/Project0551/jingyi/fmm/example/data/harbin.tmp/edges.shp')
+
+print('hello')
+lon_min = 126.506130
+lat_min = 45.657920
+lon_max = 126.771862
+lat_max = 45.830905
+minx, miny = gps2webmercator(lon_min, lat_min)
+maxx, maxy = gps2webmercator(lon_max, lat_max)
+lon_range = maxx - minx
+lat_range = maxy - miny
+
+
+def get_map_mask():
+    mask = torch.zeros((1, 1, 138, 148))
+    geo = osmnx_ways.geometry.values
+    for pos in geo:
+        pos_str = pos.__str__()
+        loc = pos_str[12:-1].split(',')
+        loc_start = loc[0].split(" ")
+        loc_end = loc[1].strip().split(" ")
+        lon_start = float(loc_start[0])
+        lat_start = float(loc_start[1])
+        lon_end = float(loc_end[0])
+        lat_end = float(loc_end[1])
+        for i in range(30):
+            cur_lon = lon_start + (lon_end - lon_start) / 30.0 * i
+            cur_lat = lat_start + (lat_end - lat_start) / 30.0 * i
+            x, y  = gps2webmercator(cur_lon, cur_lat)
+            x = math.floor((x - minx) / (lon_range / 148))
+            if x == 148:
+                x = 147
+            y = math.floor((y - miny) / (lat_range / 138))
+            if y == 138:
+                y = 137
+            mask[0][0][y][x] = 1
+
+    return mask
+            
+        
 
 def get_lengths():
     fid = osmnx_ways.fid.values
@@ -138,3 +206,12 @@ def get_graph_dgl(device=None):
     adj = get_scipy_adj()
     G = dgl.from_scipy(adj, device=device)
     return G
+
+
+        
+    
+        
+        
+        
+        
+    
