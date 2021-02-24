@@ -66,7 +66,23 @@ deepgtt+transformer
 ```bash
 cd deepgtt/harbin/python-transformer
 
-python train.py -trainpath /Project0551/jingyi/deepgtt/data/trainpath-fmm -validpath /Project0551/jingyi/deepgtt/data/validpath-fmm -model_path  /Project0551/jingyi/deepgtt/model/transformer-test -num_epoch 30 -n_warmup_steps 8000
+python train.py -trainpath /Project0551/jingyi/deepgtt/data/trainpath-fmm-gnn-spatial -validpath /Project0551/jingyi/deepgtt/data/validpath-fmm-gnn-spatial -model_path  /Project0551/jingyi/deepgtt/model/transformer-test -num_epoch 30 -n_warmup_steps 8000
+```
+
+deepgtt+map reconstruction
+
+```bash
+cd deepgtt/harbin/python
+
+python train_recon.py -trainpath /Project0551/jingyi/deepgtt/data/trainpath-fmm-gnn-spatial -validpath /Project0551/jingyi/deepgtt/validpath-fmm-gnn-spatial -model_path  /Project0551/jingyi/deepgtt/model/transformer-test -lr 0.005
+```
+
+deepgtt+transformer+map reconstruction
+
+```bash
+cd deepgtt/harbin/python
+
+python train_combine.py -trainpath /Project0551/jingyi/deepgtt/data/trainpath-fmm-gnn-spatial -validpath /Project0551/jingyi/deepgtt/data/validpath-fmm-gnn-spatial -model_path  /Project0551/jingyi/deepgtt/model/transformer-test -num_epoch 30 -n_warmup_steps 16000 -lr 0.2
 ```
 
 deepgtt+gnn
@@ -76,13 +92,7 @@ cd deepgtt/harbin/python
 
 python train_gnn.py -trainpath /Project0551/jingyi/deepgtt/data/trainpath-fmm-gnn-spatial -validpath /Project0551/jingyi/deepgtt/data/validpath-fmm-gnn-spatial -kl_decay 0.0 -use_selu -random_emit -model_path  /Project0551/jingyi/deepgtt/model/gnn-test -use_gnn True -dim_c 128 
 ```
-deepgtt(trajectory-specific)
 
-```bash
-cd deepgtt/harbin/python
-
-python train_spatial.py -trainpath /Project0551/jingyi/deepgtt/data/trainpath-fmm-gnn-spatial -validpath /Project0551/jingyi/deepgtt/data/validpath-fmm-gnn-spatial -model_path  /Project0551/jingyi/deepgtt/model/spatial-test -use_gnn False -lr_decay 0.8
-```
 
 ## Testing
 
