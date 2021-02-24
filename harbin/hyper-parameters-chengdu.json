@@ -1,0 +1,11 @@
+{
+  "region":
+  {
+    "minlon":104.04214,
+    "minlat":30.65294,
+    "maxlon":104.12958,
+    "maxlat":30.72775,
+    "cellsize":200.0
+  },
+  "NUM_ROADS":8497
+}

@@ -180,6 +180,21 @@ class ProbTraffic(nn.Module):
             nn.LeakyReLU(0.1, inplace=True),
             nn.AvgPool2d(7)
         ]
+        # for chengdu dataset
+#         conv_layers = [
+#             nn.Conv2d(n_in, 32, (3, 3), padding=1),
+#             nn.MaxPool2d((2, 2)),
+#             nn.BatchNorm2d(32),
+#             nn.LeakyReLU(0.1, inplace=True),
+#             nn.Conv2d(32, 64, (3, 3), padding=1),
+#             nn.MaxPool2d((2, 2)),
+#             nn.BatchNorm2d(64),
+#             nn.LeakyReLU(0.1, inplace=True),
+#             nn.Conv2d(64, 128, (3, 3), padding=1),
+#             nn.MaxPool2d((2, 2)),
+#             nn.BatchNorm2d(128),
+#             nn.LeakyReLU(0.1, inplace=True),
+#         ]
         self.f1 = nn.Sequential(*conv_layers)
         self.f2 = MLP2(128*2*2, hidden_size, dim_c, dropout, use_selu)
 
@@ -245,8 +260,7 @@ class ProbTravelTime(nn.Module):
 
 
 
-
-class TTime(nn.Module):
+class TTime_combine(nn.Module):
     # note that it should satisfy n_head * d_v = dim_u + dim_s1 + dim_s2 + dim_s3
     def __init__(self, num_u, dim_u, dict_u,
                        num_s1, dim_s1, dict_s1,
@@ -256,8 +270,8 @@ class TTime(nn.Module):
                        dim_rho, dim_c, lengths,
                        hidden_size1, hidden_size2, hidden_size3,
                        dropout, use_selu, device):
-        super(TTime, self).__init__()
-        self.probrho = ProbRho(num_u, dim_u, dict_u, lengths,
+        super(TTime_combine, self).__init__()
+        self.probrho = ProbRho_transformer(num_u, dim_u, dict_u, lengths,
                                num_s1, dim_s1, dict_s1,
                                num_s2, dim_s2, dict_s2,
                                num_s3, dim_s3, dict_s3,

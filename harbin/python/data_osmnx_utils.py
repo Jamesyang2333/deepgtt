@@ -111,11 +111,17 @@ def gps2webmercator_lat(lat):
     t = math.sin(north)
     return 3189068.5 * math.log((1 + t) / (1 - t))
 
+# harbin stat
+# lon_min = 126.506130
+# lat_min = 45.657920
+# lon_max = 126.771862
+# lat_max = 45.830905
+# chengdu stat
+lon_min = 104.04214
+lat_min = 30.65294
+lon_max = 104.12958
+lat_max = 30.72775
 
-lon_min = 126.506130
-lat_min = 45.657920
-lon_max = 126.771862
-lat_max = 45.830905
 minx, miny = gps2webmercator(lon_min, lat_min)
 maxx, maxy = gps2webmercator(lon_max, lat_max)
 lon_range = maxx - minx
@@ -212,12 +218,12 @@ class SlotData():
         # calculate the feature map index for each road link
         lon_idx = []
         lat_idx = []
-        lon_idx = [torch.tensor(np.floor((vfunc_lon(lon_rec + lon_min) - minx) / (lon_range / 18)), dtype=torch.long) for lon_rec in self.lon[start:end]]
-        for lon_rec in lon_idx:
-            lon_rec[lon_rec==18] = 17
-        lat_idx = [torch.tensor(np.floor((vfunc_lat(lat_rec + lat_min) - miny) / (lat_range / 17)), dtype=torch.long) for lat_rec in self.lat[start:end]]
-        for lat_rec in lat_idx:
-            lat_rec[lat_rec==17] = 16
+#         lon_idx = [torch.tensor(np.floor((vfunc_lon(lon_rec + lon_min) - minx) / (lon_range / 18)), dtype=torch.long) for lon_rec in self.lon[start:end]]
+#         for lon_rec in lon_idx:
+#             lon_rec[lon_rec==18] = 17
+#         lat_idx = [torch.tensor(np.floor((vfunc_lat(lat_rec + lat_min) - miny) / (lat_range / 17)), dtype=torch.long) for lat_rec in self.lat[start:end]]
+#         for lat_rec in lat_idx:
+#             lat_rec[lat_rec==17] = 16
 #         lon_idx = [torch.tensor(np.floor((vfunc_lon(lon_rec + lon_min) - minx) / (lon_range / 6)), dtype=torch.long) for lon_rec in self.lon[start:end]]
 #         for lon_rec in lon_idx:
 #             lon_rec[lon_rec==6] = 5
@@ -259,12 +265,12 @@ class SlotData():
         # calculate the feature map index for each road link
         lon_idx = []
         lat_idx = []
-        lon_idx = [torch.tensor(np.floor((vfunc_lon(lon_rec + lon_min) - minx) / (lon_range / 18)), dtype=torch.long) for lon_rec in self.lon[start:end]]
-        for lon_rec in lon_idx:
-            lon_rec[lon_rec==18] = 17
-        lat_idx = [torch.tensor(np.floor((vfunc_lat(lat_rec + lat_min) - miny) / (lat_range / 17)), dtype=torch.long) for lat_rec in self.lat[start:end]]
-        for lat_rec in lat_idx:
-            lat_rec[lat_rec==17] = 16
+#         lon_idx = [torch.tensor(np.floor((vfunc_lon(lon_rec + lon_min) - minx) / (lon_range / 18)), dtype=torch.long) for lon_rec in self.lon[start:end]]
+#         for lon_rec in lon_idx:
+#             lon_rec[lon_rec==18] = 17
+#         lat_idx = [torch.tensor(np.floor((vfunc_lat(lat_rec + lat_min) - miny) / (lat_range / 17)), dtype=torch.long) for lat_rec in self.lat[start:end]]
+#         for lat_rec in lat_idx:
+#             lat_rec[lat_rec==17] = 16
 #         lon_idx = [torch.tensor(np.floor((vfunc_lon(lon_rec + lon_min) - minx) / (lon_range / 6)), dtype=torch.long) for lon_rec in self.lon[start:end]]
 #         for lon_rec in lon_idx:
 #             lon_rec[lon_rec==6] = 5
@@ -314,6 +320,7 @@ class DataLoader():
                 if use_gnn:
                     links = f["/{}/Links".format(slot)][...]
                     links = json.loads(links.tobytes())
+                    # 14963 is the total number of road segments in the Harbin dataset
                     link_array = np.zeros((14963, 3))                         
                     for fid, value in links.items():
                         # use fid because gat doesn't consider the zero index in the graph

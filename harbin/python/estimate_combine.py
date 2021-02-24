@@ -8,7 +8,7 @@ import os, argparse, time
 
 ## python python-model/estimate.py -testpath travel-model/data-7min/testdata -model best-model.pt
 
-parser = argparse.ArgumentParser(description="estimate.py")
+parser = argparse.ArgumentParser(description="estimate_spatial.py")
 
 parser.add_argument("-testpath", help="Path to test data",
     default="/home/xiucheng/data-backup/bigtable/2015-taxi/data/testdata")
@@ -18,12 +18,23 @@ parser.add_argument("-model", default="best-model.pt")
 parser.add_argument("-batch_size", type=int, default=128,
     help="The batch size")
 
+parser.add_argument("-use_gnn", type=bool, default=False)
+
 parser.add_argument("-model_list", default="./test_list")
 
 args = parser.parse_args()
 print(args)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+testfiles = list(filter(lambda x:x.endswith(".h5"),
+                        sorted(os.listdir(args.testpath))))
+test_dataloader = DataLoader(args.testpath)
+print("Loading the testing data...")
+test_dataloader.read_files(testfiles, use_gnn=args.use_gnn)
+test_slot_size = np.array(list(map(lambda s:s.ntrips, test_dataloader.slotdata_pool)))
+print("There are {} trips in total".format(test_slot_size.sum()))
+test_num_iterations = int(np.ceil(test_slot_size/args.batch_size).sum())
 
 def log_pdf(logμ, logλ, t):
     """
@@ -67,36 +78,33 @@ def trip2logIG(probrho, trips, ratios, S):
 def load_model(fname):
     model = torch.load(fname)
     params = model["params"]
-    probrho = ProbRho(params["num_u"], params["dim_u"], params["dict_u"], params["lengths"],
+    # To evaluate the model with map reconstruction
+#     ttime_combine = TTime_recon(params["num_u"], params["dim_u"], params["dict_u"], 
+#                       params["num_s1"], params["dim_s1"], params["dict_s1"],
+#                       params["num_s2"], params["dim_s2"], params["dict_s2"],
+#                       params["num_s3"], params["dim_s3"], params["dict_s3"], 
+#                       params["dim_rho"], params["dim_c"], params["lengths"],
+#                       params["hidden_size1"], params["hidden_size2"], params["hidden_size3"],
+#                       params["dropout"], params["use_selu"], device).to(device)
+    # To evaluate the combined model
+    ttime_combine = TTime_combine(params["num_u"], params["dim_u"], params["dict_u"], 
                       params["num_s1"], params["dim_s1"], params["dict_s1"],
                       params["num_s2"], params["dim_s2"], params["dict_s2"],
-                      params["num_s3"], params["dim_s3"], params["dict_s3"],
-                      params["hidden_size1"], params["dim_rho"],
+                      params["num_s3"], params["dim_s3"], params["dict_s3"], 
+                      params["n_layers"], params["d_inner"], params["n_head"], 
+                      params["d_k"], params["d_v"],
+                      params["dim_rho"], params["dim_c"], params["lengths"],
+                      params["hidden_size1"], params["hidden_size2"], params["hidden_size3"],
                       params["dropout"], params["use_selu"], device).to(device)
-    probtraffic = ProbTraffic(1, params["hidden_size2"], params["dim_c"],
-                              params["dropout"], params["use_selu"]).to(device)
-#     probtraffic = ProbTraffic_reconstruct_mask(1, params["hidden_size2"], params["dim_c"],
-#                               params["dropout"], params["use_selu"], db_utils.get_map_mask()).to(device)
-    probttime = ProbTravelTime(params["dim_rho"], params["dim_c"], params["hidden_size3"],
-                               params["dropout"], params["use_selu"]).to(device)
-    probrho.load_state_dict(model["probrho"])
-    probtraffic.load_state_dict(model["probtraffic"])
-    probttime.load_state_dict(model["probttime"])
-    return probrho, probtraffic, probttime
+    ttime_combine.load_state_dict(model["TTime_combine"])
+    return ttime_combine
 
-def validate(num_iterations, probrho,
-                             probtraffic,
-                             probttime):
+def validate(num_iterations, model):
     total_loss, total_mse, total_l1 = 0.0, 0.0, 0.0
     for _ in range(num_iterations):
         data = test_dataloader.order_emit(args.batch_size)
-        road_lens = probrho.roads_length(data.trips, data.ratios)
-        l = road_lens.sum(dim=1) # the whole trip lengths
-        w = road_lens / road_lens.sum(dim=1, keepdim=True) # road weights
-        rho = probrho(data.trips)
-        
-        c, mu_c, logvar_c = probtraffic(data.S.to(device))
-        logμ, logλ = probttime(rho, c, w, l)
+        s = data.S.to(device)
+        logμ, logλ, mu_c, logvar_c, s_comp = model(data.trips, data.ratios, s)
         times = data.times.to(device)
         loss = log_prob_loss(logμ, logλ, times)
         total_loss += loss.item() * data.trips.shape[0]
@@ -109,25 +117,14 @@ def validate(num_iterations, probrho,
 
     return mean_loss, mean_mse
 
-
-testfiles = list(filter(lambda x:x.endswith(".h5"),
-                        sorted(os.listdir(args.testpath))))
-test_dataloader = DataLoader(args.testpath)
-print("Loading the testing data...")
-test_dataloader.read_files(testfiles)
-test_slot_size = np.array(list(map(lambda s:s.ntrips, test_dataloader.slotdata_pool)))
-print("There are {} trips in total".format(test_slot_size.sum()))
-test_num_iterations = int(np.ceil(test_slot_size/args.batch_size).sum())
-
 f = open(args.model_list, 'r')
 for line in f:
     model = line.strip()
     print(model)
-    probrho, probtraffic, probttime = load_model(model)
-    probrho.eval()
-    probtraffic.eval()
-    probttime.eval()
+    ttime_combine = load_model(model)
+    ttime_combine.eval()
+
     tic = time.time()
     with torch.no_grad():
-        validate(test_num_iterations, probrho, probtraffic, probttime)
+        validate(test_num_iterations, ttime_combine)
     print("Time passed: {} seconds".format(time.time() - tic))

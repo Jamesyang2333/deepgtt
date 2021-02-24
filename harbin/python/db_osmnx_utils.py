@@ -37,7 +37,8 @@ def gps2webmercator_lat(lat):
     return 3189068.5 * math.log((1 + t) / (1 - t))
 
 
-osmnx_ways = gpd.read_file('/Project0551/jingyi/fmm/example/data/harbin.tmp/edges.shp')
+# osmnx_ways = gpd.read_file('/Project0551/jingyi/fmm/example/data/harbin.tmp/edges.shp')
+osmnx_ways = gpd.read_file('/Project0551/jingyi/fmm/example/data/chengdu.tmp/edges.shp')
 
 print('hello')
 lon_min = 126.506130
@@ -142,7 +143,10 @@ def get_dict_s3():
     s3: one way or not
     """
     oneway = osmnx_ways.oneway
-    df = pd.concat([osmnx_ways.fid, oneway.apply(lambda x: int(x))],
+#     df = pd.concat([osmnx_ways.fid, oneway.apply(lambda x: int(x))],
+#                    axis=1, keys=['fid', 'oneway'])
+    # For chengdu, the field values are string
+    df = pd.concat([osmnx_ways.fid, oneway.apply(lambda x: 1 if x=='True' else 0)],
                    axis=1, keys=['fid', 'oneway'])
     dict_s3 = {}
     dict_s3[0] = 0

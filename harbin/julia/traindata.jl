@@ -107,12 +107,15 @@ function savetraindata(h5path::String, links::Dict, region::SpatialRegion, jldfi
     Dump the trips in `jldfile` into train data.
     """
     ymd = basename(jldfile) |> splitext |> first |> x->split(x, "_") |> last
-    m, d = parse(Int, ymd[3:4]), parse(Int, ymd[5:6])
+    # chengdu dataset uses 4 numbers for year, while harbin uses 2
+#     m, d = parse(Int, ymd[3:4]), parse(Int, ymd[5:6])
+    m, d = parse(Int, ymd[5:6]), parse(Int, ymd[7:8])
     h5file = ymd * ".h5"
     ## Filtering out the trajectories with serious GPS errors
     @printf("%s\n", jldfile)
     trips = filter(trip -> length(trip.roads)>=5, load(jldfile, "trips"))
-    stms = Dates.datetime2unix(DateTime(2015, m, d, 0, 0))
+    # chengdu dataset is in 2016, while harbin is in 2015
+    stms = Dates.datetime2unix(DateTime(2016, m, d, 0, 0))
     savetraindata(joinpath(h5path, h5file), links, region, trips, stms)
 end
 
@@ -120,10 +123,10 @@ function savetraindata(h5path::String, jldpath::String)
     """
     Dump all jldfiles into h5files (training data).
     """
-    param  = JSON.parsefile("../hyper-parameters.json")
+    param  = JSON.parsefile("../hyper-parameters-chengdu.json")
     links = Dict([])
     region = param["region"]
-    harbin = SpatialRegion{Float64}("harbin",
+    harbin = SpatialRegion{Float64}("chengdu",
                                     region["minlon"], region["minlat"],
                                     region["maxlon"], region["maxlat"],
                                     region["cellsize"], region["cellsize"])
